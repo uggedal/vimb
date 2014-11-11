@@ -17,34 +17,27 @@
  * along with this program. If not, see http://www.gnu.org/licenses/.
  */
 
-#ifndef _COMMAND_H
-#define _COMMAND_H
+#include "config.h"
+#ifdef FEATURE_COOKIE
 
-enum {
-    COMMAND_YANK_ARG,
-    COMMAND_YANK_URI,
-    COMMAND_YANK_SELECTION
-};
+#ifndef _COOKIEJAR_H
+#define _COOKIEJAR_H
 
-enum {
-    COMMAND_SAVE_CURRENT,
-    COMMAND_SAVE_URI
-};
+#define COOKIEJAR_TYPE (cookiejar_get_type())
+#define COOKIEJAR(obj) (G_TYPE_CHECK_INSTANCE_CAST((obj), COOKIEJAR_TYPE, CookieJar))
 
-#ifdef FEATURE_QUEUE
-enum {
-    COMMAND_QUEUE_PUSH,
-    COMMAND_QUEUE_UNSHIFT,
-    COMMAND_QUEUE_POP,
-    COMMAND_QUEUE_CLEAR
-};
+
+typedef struct {
+    SoupCookieJarText parent_instance;
+    int lock;
+} CookieJar;
+
+typedef struct {
+    SoupCookieJarTextClass parent_class;
+} CookieJarClass;
+
+GType cookiejar_get_type(void);
+SoupCookieJar *cookiejar_new(const char *file, gboolean ro);
+
+#endif /* end of include guard: _COOKIEJAR_H */
 #endif
-
-gboolean command_search(const Arg *arg);
-gboolean command_yank(const Arg *arg, char buf);
-gboolean command_save(const Arg *arg);
-#ifdef FEATURE_QUEUE
-gboolean command_queue(const Arg *arg);
-#endif
-
-#endif /* end of include guard: _COMMAND_H */

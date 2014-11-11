@@ -1,26 +1,106 @@
-var VbHint = (function(){
+Object.freeze((function(){
     'use strict';
 
-    var hConts   = [],               /* holds the hintcontainers of the different documents */
-        hints    = [],               /* holds all hint data (hinted element, label, number) */
-        focusNum = 1,                /* number of current focused hint */
-        cId      = "_hintContainer", /* id of the conteiner holding the hint lables */
-        lClass   = "_hintLabel",     /* class used on the hint labels with the hint numbers */
-        hClass   = "_hintElem",      /* marks hinted elements */
-        fClass   = "_hintFocus",     /* marks focused element and focued hint */
-        config;
+    var hints      = [],               /* holds all hint data (hinted element, label, number) in view port */
+        docs       = [],               /* hold the affected document with the start and end index of the hints */
+        validHints = [],               /* holds the valid hinted elements matching the filter condition */
+        activeHint,                    /* holds the active hint object */
+        filterText = "",               /* holds the typed filter text */
+        filterNum  = 0,                /* holds the numeric filter */
+        /* TODO remove these classes and use the 'vimbhint' attribute for */
+        /* styling the hints and labels - but this might break user */
+        /* stylesheets that use the classes for styling */
+        cId      = "_hintContainer",   /* id of the container holding the hint labels */
+        lClass   = "_hintLabel",       /* class used on the hint labels with the hint numbers */
+        hClass   = "_hintElem",        /* marks hinted elements */
+        fClass   = "_hintFocus",       /* marks focused element and focussed hint */
+        config,
+        style    = "." + lClass + "{" +
+            "-webkit-transform:translate(-4px,-4px);" +
+            "position:absolute;" +
+            "z-index:100000;" +
+            "font:bold\x20.8em\x20monospace;" +
+            "color:#000;" +
+            "background-color:#fff;" +
+            "margin:0;" +
+            "padding:0px 1px;" +
+            "border:1px solid #444;" +
+            "opacity:0.7" +
+            "}" +
+            "." + hClass + "{" +
+            "background-color:#ff0 !important;" +
+            "color:#000 !important" +
+            "}" +
+            "." + hClass + "." + fClass + "{" +
+            "background-color:#8f0 !important" +
+            "}" +
+            "." + lClass + "." + fClass + "{" +
+            /* use higher z-index to show the active label if it's overlapped by other labels */
+            "z-index:100001;" +
+            "opacity:1" +
+            "}";
 
-    function create(inputText)
-    {
-        clear();
+    /* the hint class used to maintain hinted element and labels */
+    function Hint() {
+        /* hide hint label and remove coloring from hinted element */
+        this.hide = function() {
+            /* remove hint labels from no more visible hints */
+            this.label.style.display = "none";
+            this.e.classList.remove(fClass);
+            this.e.classList.remove(hClass);
+        };
 
+        /* show the hint element colored with the hint label */
+        this.show = function() {
+            this.label.style.display = "";
+            this.e.classList.add(hClass);
+
+            /* create the label with the hint number */
+            var text = [];
+            if (this.e instanceof HTMLInputElement) {
+                var type = this.e.type;
+                if (type === "checkbox") {
+                    text.push(this.e.checked ? "☑" : "☐");
+                } else if (type === "radio") {
+                    text.push(this.e.checked ? "⊙" : "○");
+                }
+            }
+            if (this.showText && this.text) {
+                text.push(this.text.substr(0, 20));
+            }
+            /* use \x20 instead of ' ' to keep this space during js2h.sh processing */
+            this.label.innerText = this.num + (text.length ? ":\x20" + text.join("\x20") : "");
+        };
+    }
+
+    function clear() {
+        var i, j, doc, e;
+        for (i = 0; i < docs.length; i++) {
+            doc = docs[i];
+            /* find all hinted elements vimbhint 'hint' */
+            var res = xpath(doc.doc, "//*[contains(@vimbhint, 'hint')]");
+            for (j = 0; j < res.snapshotLength; j++) {
+                e = res.snapshotItem(j);
+                e.removeAttribute("vimbhint");
+                e.classList.remove(fClass);
+                e.classList.remove(hClass);
+            }
+            doc.div.parentNode.removeChild(doc.div);
+        }
+        docs       = [];
+        hints      = [];
+        validHints = [];
+        filterText = "";
+        filterNum  = 0;
+    }
+
+    function create() {
         var count = 0;
 
-        function helper(win, offsets)
-        {
+        function helper(win, offsets) {
             /* document may be undefined for frames out of the same origin */
             /* policy and will break the whole code - so we check this before */
-            if (win.document === undefined) {
+            if (typeof win.document == "undefined") {
                 return;
             }
 
@@ -28,52 +108,49 @@ var VbHint = (function(){
             offsets.right  = win.innerWidth  - offsets.right;
             offsets.bottom = win.innerHeight - offsets.bottom;
 
-            function isVisible(e)
-            {
-                if (e === undefined) {
+            /* checks if given elemente is in viewport and visible */
+            function isVisible(e) {
+                if (typeof e == "undefined") {
                     return false;
                 }
                 var rect = e.getBoundingClientRect();
                 if (!rect ||
                     rect.top > offsets.bottom || rect.bottom < offsets.top ||
-                    rect.left > offsets.right || rect.right < offsets.left ||
-                    !rect.width || !rect.height
+                    rect.left > offsets.right || rect.right < offsets.left
                 ) {
                     return false;
                 }
 
-                var cStyle = win.getComputedStyle(e, null);
-                if (cStyle.display === "none" || cStyle.visibility !== "visible") {
-                    return false;
+                if ((!rect.width || !rect.height) && (e.textContent || !e.name)) {
+                    var arr   = Array.prototype.slice.call(e.childNodes);
+                    var check = function(e) {
+                        return e instanceof Element
+                            && e.style.float != "none"
+                            && isVisible(e);
+                    };
+                    if (!arr.some(check)) {
+                        return false;
+                    }
                 }
-                /* check if the element at the center of current is that element self */
-                /* else the element is covers by another element or within a hidden container */
-                if (!e.childElementCount
-                    && e.ownerDocument.elementFromPoint((rect.left + rect.right)/2, (rect.top + rect.bottom)/2) !== e
-                ) {
-                    return false;
-                }
-                return true;
+
+                var s = win.getComputedStyle(e, null);
+                return s.display !== "none" && s.visibility == "visible";
             }
 
-            var doc   = win.document,
-                xpath = getXpath(inputText),
-                res   = doc.evaluate(
-                    xpath, doc,
-                    function (p) {return "http://www.w3.org/1999/xhtml";},
-                    XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null
-                ),
+            var doc       = win.document,
+                res       = xpath(doc, config.xpath),
                 /* generate basic hint element which will be cloned and updated later */
                 labelTmpl = doc.createElement("span"),
                 e, i;
 
             labelTmpl.className = lClass;
+            labelTmpl.setAttribute("vimbhint", "label");
 
             var containerOffsets = getOffsets(doc),
                 offsetX = containerOffsets[0],
                 offsetY = containerOffsets[1],
                 fragment = doc.createDocumentFragment(),
-                rect, label, text;
+                rect, label, text, showText, start = hints.length;
 
             /* collect all visible elements in hints array */
             for (i = 0; i < res.snapshotLength; i++) {
@@ -87,30 +164,49 @@ var VbHint = (function(){
                 /* create the hint label with number */
                 rect  = e.getBoundingClientRect();
                 label = labelTmpl.cloneNode(false);
-                label.style.left = Math.max((rect.left + offsetX), offsetX) + "px";
-                label.style.top  = Math.max((rect.top  + offsetY), offsetY) + "px";
-                label.innerText  = count;
+                label.setAttribute(
+                    "style", [
+                        "display:none;",
+                        "left:", Math.max((rect.left + offsetX), offsetX), "px;",
+                        "top:", Math.max((rect.top + offsetY), offsetY), "px;"
+                    ].join("")
+                );
 
                 /* if hinted element is an image - show title or alt of the image in hint label */
                 /* this allows to see how to filter for the image */
                 text = "";
+                showText = false;
                 if (e instanceof HTMLImageElement) {
-                    text = e.alt || e.title;
+                    text     = e.title || e.alt;
+                    showText = true;
                 } else if (e.firstElementChild instanceof HTMLImageElement && /^\s*$/.test(e.textContent)) {
-                    text = e.firstElementChild.title || e.firstElementChild.alt;
+                    text     = e.firstElementChild.title || e.firstElementChild.alt;
+                    showText = true;
+                } else if (e instanceof HTMLInputElement) {
+                    var type = e.type;
+                    if (type === "image") {
+                        text = e.alt || "";
+                    } else if (e.value && type !== "password") {
+                        text     = e.value;
+                        showText = (type === "radio" || type === "checkbox");
+                    }
+                } else if (e instanceof HTMLSelectElement) {
+                    if (e.selectedIndex >= 0) {
+                        text = e.item(e.selectedIndex).text;
+                    }
+                } else {
+                    text = e.textContent;
                 }
-                if (text) {
-                    label.innerText += ": " + text.substr(0, 20);
-                }
-
                 /* add the hint class to the hinted element */
-                e.classList.add(hClass);
                 fragment.appendChild(label);
+                e.setAttribute("vimbhint", "hint");
 
                 hints.push({
-                    e:     e,
-                    num:   count,
-                    label: label
+                    e:         e,
+                    label:     label,
+                    text:      text,
+                    showText:  showText,
+                    __proto__: new Hint
                 });
 
                 if (count >= config.maxHints) {
@@ -121,12 +217,20 @@ var VbHint = (function(){
             /* append the fragment to the document */
             var hDiv = doc.createElement("div");
             hDiv.id  = cId;
+            hDiv.setAttribute("vimbhint", "container");
             hDiv.appendChild(fragment);
-            doc.documentElement.appendChild(hDiv);
+            if (doc.body) {
+                doc.body.appendChild(hDiv);
+            }
             /* create the default style sheet */
             createStyle(doc);
 
-            hConts.push(hDiv);
+            docs.push({
+                doc:   doc,
+                start: start,
+                end:   hints.length - 1,
+                div:   hDiv
+            });
 
             /* recurse into any iframe or frame element */
             for (var f in win.frames) {
@@ -144,15 +248,57 @@ var VbHint = (function(){
         }
 
         helper(window);
-
-        if (count <= 1) {
-            return fire(1);
-        }
-        return focusHint(1);
     }
 
-    function getOffsets(doc)
-    {
+    function show(fireLast) {
+        var i, hint, newIdx,
+            num     = 1,
+            matcher = getMatcher(filterText);
+
+        /* clear the array of valid hints */
+        validHints = [];
+        for (i = 0; i < hints.length; i++) {
+            hint = hints[i];
+            /* hide hints not matching the filter text */
+            if (!matcher(hint.text)) {
+                hint.hide();
+            } else {
+                /* assign the new hint number to the hint */
+                hint.num = num;
+                /* check for number filter */
+                if (!filterNum || 0 === String(num).indexOf(String(filterNum))) {
+                    hint.show();
+                    validHints.push(hint);
+                } else {
+                    hint.hide();
+                }
+                num++;
+            }
+        }
+        if (fireLast && validHints.length <= 1) {
+            focusHint(0);
+            return fire();
+        }
+
+        /* if the previous active hint isn't valid set focus to first */
+        if (!activeHint || validHints.indexOf(activeHint) < 0) {
+            return focusHint(0);
+        }
+    }
+
+    /* Returns a validator method to check if the hint elements text matches */
+    /* the given filter text. */
+    function getMatcher(text) {
+        var tokens = text.toLowerCase().split(/\s+/);
+        return function (itemText) {
+            itemText = itemText.toLowerCase();
+            return tokens.every(function (token) {
+                return 0 <= itemText.indexOf(token);
+            });
+        };
+    }
+
+    function getOffsets(doc) {
         var body  = doc.body || doc.documentElement,
             style = body.style,
             rect;
@@ -164,111 +310,64 @@ var VbHint = (function(){
         return [doc.defaultView.scrollX, doc.defaultView.scrollY];
     }
 
-    function createStyle(doc)
-    {
+    function createStyle(doc) {
         if (doc.hasStyle) {
             return;
         }
         var e = doc.createElement("style");
-        e.innerHTML += "." + lClass + "{" +
-            "-webkit-transform:translate(-4px,-4px);" +
-            "position:absolute;" +
-            "z-index:100000;" +
-            "font-family:monospace;" +
-            "font-weight:bold;" +
-            "font-size:10px;" +
-            "color:#000;" +
-            "background-color:#fff;" +
-            "margin:0;" +
-            "padding:0px 1px;" +
-            "border:1px solid #444;" +
-            "opacity:0.7" +
-            "}" +
-            "." + hClass + "{" +
-            "background-color:#ff0 !important;" +
-            "color:#000 !important" +
-            "}" +
-            "." + hClass + "." + fClass + "{" +
-            "background-color:#8f0 !important" +
-            "}" +
-            "." + lClass + "." + fClass + "{" +
-            "opacity:1" +
-            "}";
-
+        e.innerHTML = style;
         doc.head.appendChild(e);
         /* prevent us from adding the style multiple times */
         doc.hasStyle = true;
     }
 
     function focus(back) {
-        var num,
-            i = getHintId(focusNum);
+        var idx = validHints.indexOf(activeHint);
+        /* previous active hint not found */
+        if (idx < 0) {
+            idx = 0;
+        }
+
         if (back) {
-            num = (i !== 0 && hints[i - 1].num !== undefined)
-                ? (hints[i - 1].num)
-                : (hints[hints.length - 1].num);
+            if (--idx < 0) {
+                idx = validHints.length - 1;
+            }
         } else {
-            num = (hints[i + 1] !== undefined)
-                ? (hints[i + 1].num)
-                : (hints[0].num);
-        }
-        return focusHint(num);
-    }
-
-    function update(n) {
-        var remove = [], i, hint;
-        if (n === 0) {
-            return create();
-        }
-        /* remove none matching hints */
-        for (i = 0; i < hints.length; ++i) {
-            hint = hints[i];
-            if (0 !== hint.num.toString().indexOf(n.toString())) {
-                remove.push(hint.num);
+            if (++idx >= validHints.length) {
+                idx = 0;
             }
         }
-
-        for (i = 0; i < remove.length; ++i) {
-            removeHint(remove[i]);
-        }
-
-        if (hints.length === 1) {
-            return fire(hints[0].num);
-        }
-        return focusHint(n);
+        return focusHint(idx);
     }
 
-    function clear() {
-        var i, hint;
-        if (hints.length === 0) {
-            return;
+    function fire() {
+        if (!activeHint) {
+            return "ERROR:";
         }
-        for (i = 0; i < hints.length; ++i) {
-            hint = hints[i];
-            if (hint.e) {
-                hint.e.classList.remove(fClass);
-                hint.e.classList.remove(hClass);
-                hint.label.parentNode.removeChild(hint.label);
-            }
+
+        var e = activeHint.e,
+            res;
+
+        /* process form actions like focus toggling inputs */
+        if (config.handleForm) {
+            res = handleForm(e);
         }
-        hints = [];
-        for (i = 0; i < hConts.length; ++i) {
-            hConts[i].parentNode.removeChild(hConts[i]);
+
+        if (config.keepOpen) {
+            /* reset the filter number */
+            filterNum = 0;
+            show(false);
+        } else {
+            clear();
         }
-        hConts = [];
+
+        return res || config.action(e);
     }
 
-    function fire(n) {
-        var hint = getHint(n || focusNum);
-        if (!hint) {
-            return "DONE:";
-        }
-
-        var e    = hint.e,
-            tag  = e.nodeName.toLowerCase(),
+    /* focus or toggle form fields */
+    function handleForm(e) {
+        var tag  = e.nodeName.toLowerCase(),
             type = e.type || "";
-
-        clear();
 
         if (tag === "input" || tag === "textarea" || tag === "select") {
             if (type === "radio" || type === "checkbox") {
@@ -287,17 +386,10 @@ var VbHint = (function(){
             e.focus();
             return "DONE:";
         }
-
-        switch (config.usage) {
-            case "T": open(e, true); return "DONE:";
-            case "O": open(e, false); return "DONE:";
-            default: return "DATA:" + getSrc(e);
-        }
     }
 
     /* internal used methods */
-    function open(e, newWin)
-    {
+    function open(e, newWin) {
         var oldTarget = e.target;
         if (newWin) {
             /* set target to open in new window */
@@ -305,156 +397,204 @@ var VbHint = (function(){
         } else if (e.target === "_blank") {
             e.removeAttribute("target");
         }
-        click(e);
+        /* to open links in new window the mouse events are fired with ctrl */
+        /* key - otherwise some ugly pages will ignore this attribute in their */
+        /* mouse event observers like duckduckgo */
+        click(e, newWin);
         e.target = oldTarget;
     }
 
-    /* set focus on hint with given number */
-    function focusHint(n)
-    {
+    /* set focus on hint with given index valid hints array */
+    function focusHint(newIdx) {
         /* reset previous focused hint */
-        var hint = getHint(focusNum);
-        if (hint) {
-            hint.e.classList.remove(fClass);
-            hint.label.classList.remove(fClass);
-
-            mouseEvent(hint.e, "mouseout");
+        if (activeHint) {
+            activeHint.e.classList.remove(fClass);
+            activeHint.label.classList.remove(fClass);
+            mouseEvent(activeHint.e, "mouseout");
         }
+        /* get the new active hint */
+        if ((activeHint = validHints[newIdx])) {
+            activeHint.e.classList.add(fClass);
+            activeHint.label.classList.add(fClass);
+            mouseEvent(activeHint.e, "mouseover");
 
-        focusNum = n;
-
-        /* mark new hint as focused */
-        hint = getHint(focusNum);
-        if (hint) {
-            hint.e.classList.add(fClass);
-            hint.label.classList.add(fClass);
-
-            mouseEvent(hint.e, "mouseover");
-
-            var source = getSrc(hint.e);
-            return "OVER:" + (source || "");
+            return "OVER:" + getSrc(activeHint.e);;
         }
     }
 
-    /* retrieves the hint for given hint number */
-    function getHint(n)
-    {
-        var i = getHintId(n);
-        return i !== null ? hints[i] : null;
+    function click(e, ctrl) {
+        mouseEvent(e, "mouseover", ctrl);
+        mouseEvent(e, "mousedown", ctrl);
+        mouseEvent(e, "mouseup", ctrl);
+        mouseEvent(e, "click", ctrl);
     }
 
-    /* retrieves the id of hint with given number */
-    function getHintId(n)
-    {
-        for (var i = 0; i < hints.length; ++i) {
-            if (hints[i].num === n) {
-                return i;
-            }
-        }
-        return null;
-    }
-
-    /* removes hint with given number from hints array */
-    function removeHint(n)
-    {
-        var i = getHintId(n);
-        if (i === null) {
-            return;
-        }
-        var hint = hints[i];
-        hint.e.classList.remove(fClass);
-        hint.e.classList.remove(hClass);
-        hint.label.parentNode.removeChild(hint.label);
-
-        /* remove hints from all hints */
-        hints.splice(i, 1);
-    }
-
-    function click(e)
-    {
-        mouseEvent(e, "mouseover");
-        mouseEvent(e, "mousedown");
-        mouseEvent(e, "mouseup");
-        mouseEvent(e, "click");
-    }
-
-    function mouseEvent(e, name)
-    {
+    function mouseEvent(e, name, ctrl) {
         var evObj = e.ownerDocument.createEvent("MouseEvents");
-        evObj.initMouseEvent(name, true, true, e.contentWindow, 0, 0, 0, 0, 0, false, false, false, false, 0, null);
+        evObj.initMouseEvent(
+            name, true, true, e.ownerDocument.defaultView,
+            0, 0, 0, 0, 0,
+            (typeof ctrl != "undefined") ? ctrl : false, false, false, false, 0, null
+        );
         e.dispatchEvent(evObj);
     }
 
     /* retrieves the url of given element */
-    function getSrc(e)
-    {
-        return e.href || e.src;
+    function getSrc(e) {
+        return e.href || e.src || "";
     }
 
-    /* retrieves the xpath expression according to mode */
-    function getXpath(s)
-    {
-        if (s === undefined) {
-            s = "";
-        }
-        /* replace $WHAT in xpath to contains(translate(WHAT, 'SEARCH', 'search'), 'search') */
-        function buildQuery(what, x, s)
-        {
-            var l, i, parts;
-            l = s.toLowerCase();
-            parts = [
-                "contains(translate(",
-                ",'"+s.toUpperCase()+"','"+l+"'),'"+l+"')"
-            ];
-            for (i = 0; i < what.length; ++i) {
-                x = x.split("$" + what[i]).join(parts.join(what[i]));
-            }
-            return x;
-        }
+    function xpath(doc, expr) {
+        return doc.evaluate(
+            expr, doc, function (p) {return "http://www.w3.org/1999/xhtml";},
+            XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null
+        );
+    }
 
-        switch (config.mode) {
-            case "l":
-                if (!s) {
-                    return "//a[@href] | //*[@onclick or @tabindex or @class='lk' or @role='link' or @role='button'] | //input[not(@type='hidden' or @disabled or @readonly)] | //area[@href] | //textarea[not(@disabled or @readonly)] | //button | //select";
+    /* follow the count last link on pagematching the given regex list */
+    function followLink(rel, patterns, count) {
+        /* returns array of matching elements */
+        function followFrame(frame) {
+            var i, p, reg, res = [],
+                doc = frame.document,
+                elems = [],
+                all = doc.getElementsByTagName("a");
+
+            /* first match links by rel attribute */
+            for (i = all.length - 1; i >= 0; i--) {
+                /* collect visible elements */
+                var s = doc.defaultView.getComputedStyle(all[i], null);
+                if (s.display !== "none" && s.visibility === "visible") {
+                    /* if there are rel attributes elements, put them in the result */
+                    if (all[i].rel.toLowerCase() === rel) {
+                        res.push(all[i]);
+                    } else {
+                        /* save to match them later */
+                        elems.push(all[i]);
+                    }
                 }
-                return buildQuery(
-                    ["@value", ".", "@placeholder", "@title", "@alt"],
-                    "//a[@href and ($. or child::img[$@title or $@alt])] | //*[(@onclick or @class='lk' or @role='link' or role='button') and $.] | //input[not(@type='hidden' or @disabled or @readonly) and ($@value or $@placeholder)] | //area[$.] | //textarea[not(@disabled or @readonly) and $.] | //button[$.] | //select[$.]",
-                    s
-                );
-            case "e":
-                if (!s) {
-                    return "//input[@type='text'] | //textarea";
+            }
+            /* match each pattern successively against each link in the page */
+            for (p = 0; p < patterns.length; p++) {
+                reg = patterns[p];
+                /* begin with the last link on page */
+                for (i = elems.length - 1; i >= 0; i--) {
+                    if (elems[i].innerText.match(reg)) {
+                        res.push(elems[i]);
+                    }
                 }
-                return buildQuery(
-                    ["@value", ".", "@placeholder"],
-                    "//input[@type='text' and ($@value or $@placeholder)] | //textarea[$.]",
-                    s
-                );
-            case "i":
-                if (!s) {
-                    return "//img[@src]";
-                }
-                return buildQuery(["@title", "@alt"], "//img[@src and ($@title or $@alt)]", s);
+            }
+            return res;
         }
+        var i, j, elems, frames = allFrames(window);
+        for (i = 0; i < frames.length; i++) {
+            elems = followFrame(frames[i]);
+            for (j = 0; j < elems.length; j++) {
+                if (--count == 0) {
+                    open(elems[j], false);
+                    return "DONE:";
+                }
+            }
+        }
+        return "ERROR:";
+    }
+
+    function incrementUri(count) {
+        var oldnum, newnum, matches = location.href.match(/(.*?)(\d+)(\D*)$/);
+        if (matches) {
+            oldnum = matches[2];
+            newnum = String(Math.max(parseInt(oldnum) + count, 0));
+            /* keep prepending zeros */
+            if (/^0/.test(oldnum)) {
+                while (newnum.length < oldnum.length) {
+                    newnum = "0" + newnum;
+                }
+            }
+            matches[2] = newnum;
+
+            location.href = matches.slice(1).join("");
+
+            return "DONE:";
+        }
+        return "ERROR:";
+    }
+
+    function allFrames(win) {
+        var i, f, frames = [win];
+        for (i = 0; i < win.frames.length; i++) {
+            frames.push(win.frames[i].frameElement);
+        }
+        return frames;
     }
 
     /* the api */
     return {
-        /* mode: l - links, i - images, e - editables */
-        /* usage: O - open, T - open in new window, U - use source */
-        init: function init(mode, usage, maxHints) {
+        init: function init(mode, keepOpen, maxHints) {
+            var prop,
+                /* holds the xpaths for the different modes */
+                xpathmap = {
+                    otY:     "//*[@href] | //*[@onclick or @tabindex or @class='lk' or @role='link' or @role='button'] | //input[not(@type='hidden' or @disabled or @readonly)] | //textarea[not(@disabled or @readonly)] | //button | //select",
+                    e:       "//input[not(@type) or @type='text'] | //textarea",
+                    iI:      "//img[@src]",
+                    OpPsTxy: "//*[@href] | //img[@src and not(ancestor::a)] | //iframe[@src]"
+                },
+                /* holds the actions to perform on hint fire */
+                actionmap = {
+                    o:          function(e) {open(e, false); return "DONE:";},
+                    t:          function(e) {open(e, true); return "DONE:";},
+                    eiIOpPsTxy: function(e) {return "DATA:" + getSrc(e);},
+                    Y:          function(e) {return "DATA:" + (e.textContent || "");}
+                };
+
             config = {
-                mode:     mode,
-                usage:    usage,
-                maxHints: maxHints
+                maxHints:   maxHints,
+                keepOpen:   keepOpen,
+                /* handle forms only useful when there are form fields in xpath */
+                /* don't handle form for Y to allow to yank form filed content */
+                /* instead of switching to input mode */
+                handleForm: ("eot".indexOf(mode) >= 0)
             };
+            for (prop in xpathmap) {
+                if (prop.indexOf(mode) >= 0) {
+                    config["xpath"] = xpathmap[prop];
+                    break;
+                }
+            }
+            for (prop in actionmap) {
+                if (prop.indexOf(mode) >= 0) {
+                    config["action"] = actionmap[prop];
+                    break;
+                }
+            }
+
+            create();
+            return show(true);
         },
-        create: create,
-        update: update,
-        clear:  clear,
-        fire:   fire,
-        focus:  focus
+        filter: function filter(text) {
+            /* remove previously set number filters to make the filter */
+            /* easier to understand for the users */
+            filterNum  = 0;
+            filterText = text || "";
+            return show(true);
+        },
+        update: function update(n) {
+            /* delete last filter number digit */
+            if (null === n && filterNum) {
+                filterNum = Math.floor(filterNum / 10);
+                return show(false);
+            }
+            if ((n >= 1 && n <= 9) || (n === 0 && filterNum)) {
+                /* allow a zero as non-first number */
+                filterNum = (filterNum ? filterNum * 10 : 0) + n;
+                return show(true);
+            }
+            return "ERROR:";
+        },
+        clear:        clear,
+        fire:         fire,
+        focus:        focus,
+        /* not really hintings but uses similar logic */
+        followLink:   followLink,
+        incrementUri: incrementUri,
     };
-})();
-Object.freeze(VbHint);
+})());

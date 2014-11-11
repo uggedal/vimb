@@ -1,7 +1,7 @@
 /**
  * vimb - a webkit based vim like browser.
  *
- * Copyright (C) 2012-2013 Daniel Carl
+ * Copyright (C) 2012-2014 Daniel Carl
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,5 +26,6 @@ gboolean shortcut_add(const char *key, const char *uri);
 gboolean shortcut_remove(const char *key);
 gboolean shortcut_set_default(const char *key);
 char *shortcut_get_uri(const char *key);
+gboolean shortcut_fill_completion(GtkListStore *store, const char *input);
 
 #endif /* end of include guard: _SHORTCUT_H */

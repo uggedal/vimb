@@ -1,7 +1,7 @@
 /**
  * vimb - a webkit based vim like browser.
  *
- * Copyright (C) 2012-2013 Daniel Carl
+ * Copyright (C) 2012-2014 Daniel Carl
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,7 +23,7 @@
 #include <X11/Xlib.h>
 #include "config.h"
 
-#ifdef FEATURE_IPC
+#ifdef FEATURE_REMOTE_CONTROL
 void atom_init(void);
 #endif
 

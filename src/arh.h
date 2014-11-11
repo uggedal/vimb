@@ -1,7 +1,8 @@
 /**
  * vimb - a webkit based vim like browser.
  *
- * Copyright (C) 2012-2013 Daniel Carl
+ * Copyright (C) 2012-2014 Daniel Carl
+ * Copyright (C) 2014 Sébastien Marie
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,9 +18,17 @@
  * along with this program. If not, see http://www.gnu.org/licenses/.
  */
 
-#ifndef _SESSION_H
-#define _SESSION_H
+#include "config.h"
+#ifdef FEATURE_ARH
 
-void session_init(void);
+#ifndef _ARH_H
+#define _ARH_H
 
-#endif /* end of include guard: _SESSION_H */
+#include "main.h"
+
+GSList *arh_parse(const char *, const char **);
+void    arh_free(GSList *);
+void    arh_run(GSList *, const char *, SoupMessage *);
+
+#endif /* end of include guard: _ARH_H */
+#endif

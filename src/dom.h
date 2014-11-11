@@ -1,7 +1,7 @@
 /**
  * vimb - a webkit based vim like browser.
  *
- * Copyright (C) 2012-2013 Daniel Carl
+ * Copyright (C) 2012-2014 Daniel Carl
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,7 +22,7 @@
 
 #include <webkit/webkit.h>
 
-// Types
+/* Types */
 #define Document            WebKitDOMDocument
 #define HtmlElement         WebKitDOMHTMLElement
 #define Element             WebKitDOMElement
@@ -32,18 +32,9 @@
 #define HtmlInputElement    WebKitDOMHTMLInputElement
 #define HtmlTextareaElement WebKitDOMHTMLTextAreaElement
 
-// style 
-#define style_compare_property(style, name, value)    (!strcmp(webkit_dom_css_style_declaration_get_property_value(style, name), value))
-
-typedef struct {
-    gulong left;
-    gulong right;
-    gulong top;
-    gulong bottom;
-} DomBoundingRect;
-
 void dom_check_auto_insert(WebKitWebView *view);
 void dom_clear_focus(WebKitWebView *view);
+gboolean dom_focus_input(WebKitWebView *view);
 gboolean dom_is_editable(Element *element);
 Element *dom_get_active_element(WebKitWebView *view);
 const char *dom_editable_element_get_value(Element *element);

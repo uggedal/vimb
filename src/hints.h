@@ -1,7 +1,7 @@
 /**
  * vimb - a webkit based vim like browser.
  *
- * Copyright (C) 2012-2013 Daniel Carl
+ * Copyright (C) 2012-2014 Daniel Carl
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,24 +22,14 @@
 
 #include "main.h"
 
-#define HINTS_GET_TYPE(n) ((n) & (HINTS_TYPE_LINK | HINTS_TYPE_IMAGE))
-
-enum {
-    HINTS_TYPE_LINK     = 1,
-    HINTS_TYPE_IMAGE    = 2,
-    HINTS_TYPE_EDITABLE = 3,
-    HINTS_PROCESS_INPUT = (1 << 2),
-    HINTS_PROCESS_YANK  = (1 << 3),
-    HINTS_PROCESS_OPEN  = (1 << 4),
-    HINTS_PROCESS_SAVE  = (1 << 5),
-    /* additional flag for HINTS_PROCESS_OPEN */
-    HINTS_OPEN_NEW      = (1 << 6),
-};
-
 void hints_init(WebKitWebFrame *frame);
-void hints_create(const char *input, guint mode, const guint prefixLength);
-void hints_update(const gulong num);
-void hints_clear();
+VbResult hints_keypress(int key);
+void hints_create(const char *input);
+void hints_fire(void);
+void hints_follow_link(const gboolean back, int count);
+void hints_increment_uri(int count);
+gboolean hints_parse_prompt(const char *prompt, char *mode, gboolean *is_gmode);
+void hints_clear(void);
 void hints_focus_next(const gboolean back);
 void hints_fire(void);
 

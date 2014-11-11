@@ -1,7 +1,7 @@
 /**
  * vimb - a webkit based vim like browser.
  *
- * Copyright (C) 2012-2013 Daniel Carl
+ * Copyright (C) 2012-2014 Daniel Carl
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,7 +30,11 @@ enum {
     COMPLETION_STORE_NUM
 };
 
+typedef void (*CompletionSelectFunc) (char *match);
+
+gboolean completion_create(GtkTreeModel *model, CompletionSelectFunc selfunc,
+    gboolean back);
 void completion_clean(void);
-gboolean completion_complete(gboolean back);
+void completion_next(gboolean back);
 
 #endif /* end of include guard: _COMPLETION_H */

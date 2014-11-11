@@ -1,7 +1,7 @@
 /**
  * vimb - a webkit based vim like browser.
  *
- * Copyright (C) 2012-2013 Daniel Carl
+ * Copyright (C) 2012-2014 Daniel Carl
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,13 +17,13 @@
  * along with this program. If not, see http://www.gnu.org/licenses/.
  */
 
-#include <gdk/gdkx.h>
 #include "config.h"
+#ifdef FEATURE_REMOTE_CONTROL
+#include <gdk/gdkx.h>
 #include "atom.h"
 #include "main.h"
-#include "command.h"
+#include "map.h"
 
-#ifdef FEATURE_IPC
 enum {
     ATOM_COMMAND,
     ATOM_OUT,
@@ -87,18 +87,20 @@ static GdkFilterReturn event_filter_cb(GdkXEvent *xevent, GdkEvent *event, gpoin
 {
     XEvent *xe = (XEvent *)xevent;
     XPropertyEvent *ev;
-    char *command;
+    char *command, *result;
 
     if (xe->type == PropertyNotify) {
         ev = &xe->xproperty;
         if (ev->state == PropertyNewValue && ev->atom == atoms[ATOM_COMMAND]) {
             /* run the command */
             command = atom_get_string(ev->atom);
-            command_run_string(command);
+            map_handle_string(command, true);
             XFree(command);
 
             /* notify about the inputbox contents */
-            atom_set_string(atoms[ATOM_OUT], (char *)GET_TEXT());
+            result = vb_get_input_text();
+            atom_set_string(atoms[ATOM_OUT], result);
+            g_free(result);
 
             return GDK_FILTER_REMOVE;
         }

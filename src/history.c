@@ -1,7 +1,7 @@
 /**
  * vimb - a webkit based vim like browser.
  *
- * Copyright (C) 2012-2013 Daniel Carl
+ * Copyright (C) 2012-2014 Daniel Carl
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,10 +17,12 @@
  * along with this program. If not, see http://www.gnu.org/licenses/.
  */
 
+#include "config.h"
 #include "main.h"
 #include "history.h"
 #include "util.h"
 #include "completion.h"
+#include "ascii.h"
 
 extern VbCore vb;
 
@@ -36,13 +38,6 @@ typedef struct {
     char *second;
 } History;
 
-static struct {
-    char  *prefix;  /* prefix that is prepended to the history item to for the complete command */
-    char  *query;   /* part of input text to match the history items */
-    GList *active;
-} history;
-
-static GList *get_list(VbInputType type, const char *query);
 static const char *get_file_by_type(HistoryType type);
 static GList *load(const char *file);
 static void write_to_file(GList *list, const char *file);
@@ -60,9 +55,18 @@ static void free_history(History *item);
 void history_cleanup(void)
 {
     const char *file;
+    GList *list;
+
+    /* don't cleanup the history file if history max size is 0 */
+    if (!vb.config.history_max) {
+        return;
+    }
+
     for (HistoryType i = HISTORY_FIRST; i < HISTORY_LAST; i++) {
         file = get_file_by_type(i);
-        write_to_file(load(file), file);
+        list = load(file);
+        write_to_file(list, file);
+        g_list_free_full(list, (GDestroyNotify)free_history);
     }
 }
 
@@ -71,77 +75,19 @@ void history_cleanup(void)
  */
 void history_add(HistoryType type, const char *value, const char *additional)
 {
-    FILE *f;
-    const char *file = get_file_by_type(type);
+    const char *file;
 
-    if ((f = fopen(file, "a+"))) {
-        file_lock_set(fileno(f), F_WRLCK);
-        if (additional) {
-            fprintf(f, "%s\t%s\n", value, additional);
-        } else {
-            fprintf(f, "%s\n", value);
-        }
-
-        file_lock_set(fileno(f), F_UNLCK);
-        fclose(f);
-    }
-}
-
-/**
- * Retrieves the item from history to be shown in input box.
- * The result must be freed by the caller.
- */
-char *history_get(const char *input, gboolean prev)
-{
-    VbInputType type;
-    const char *prefix, *query;
-    GList *new = NULL;
-
-    if (history.active) {
-        /* calculate the actual content of the inpubox from history data, if
-         * the theoretical content and the actual given input are different
-         * rewind the history to recreate it later new */
-        char *current = g_strconcat(history.prefix, (char*)history.active->data, NULL);
-        if (strcmp(input, current)) {
-            history_rewind();
-        }
-        g_free(current);
+    /* don't write a history entry to the file if history is disabled or
+     * history max size is set to 0 */
+    if (!vb.state.enable_history || !vb.config.history_max) {
+        return;
     }
 
-    /* create the history list if the lookup is started or input was changed */
-    if (!history.active) {
-        type = vb_get_input_parts(
-            input, VB_INPUT_COMMAND|VB_INPUT_SEARCH_FORWARD|VB_INPUT_SEARCH_BACKWARD,
-            &prefix, &query
-        );
-        history.active = get_list(type, query);
-        if (!history.active) {
-            return NULL;
-        }
-        OVERWRITE_STRING(history.query, query);
-        OVERWRITE_STRING(history.prefix, prefix);
-    }
-
-    if (prev) {
-        if ((new = g_list_next(history.active))) {
-            history.active = new;
-        }
-    } else if ((new = g_list_previous(history.active))) {
-        history.active = new;
-    }
-
-    return g_strconcat(history.prefix, (char*)history.active->data, NULL);
-}
-
-void history_rewind(void)
-{
-    if (history.active) {
-        /* free temporary used history list */
-        g_list_free_full(history.active, (GDestroyNotify)g_free);
-
-        OVERWRITE_STRING(history.prefix, NULL);
-        OVERWRITE_STRING(history.query, NULL);
-        history.active = NULL;
+    file = get_file_by_type(type);
+    if (additional) {
+        util_file_append(file, "%s\t%s\n", value, additional);
+    } else {
+        util_file_append(file, "%s\n", value);
     }
 }
 
@@ -156,7 +102,7 @@ gboolean history_fill_completion(GtkListStore *store, HistoryType type, const ch
 
     src = load(get_file_by_type(type));
     src = g_list_reverse(src);
-    if (!input || *input == '\0') {
+    if (!input || !*input) {
         /* without any tags return all items */
         for (GList *l = src; l; l = l->next) {
             item = l->data;
@@ -208,7 +154,7 @@ gboolean history_fill_completion(GtkListStore *store, HistoryType type, const ch
             }
         }
     }
-    g_list_free_full(src, (GDestroyNotify)g_free);
+    g_list_free_full(src, (GDestroyNotify)free_history);
 
     return found;
 }
@@ -217,7 +163,7 @@ gboolean history_fill_completion(GtkListStore *store, HistoryType type, const ch
  * Retrieves the list of matching history items.
  * The list must be freed.
  */
-static GList *get_list(VbInputType type, const char *query)
+GList *history_get_list(VbInputType type, const char *query)
 {
     GList *result = NULL, *src = NULL;
 
@@ -245,7 +191,7 @@ static GList *get_list(VbInputType type, const char *query)
     g_list_free_full(src, (GDestroyNotify)free_history);
 
     /* prepend the original query as own item like done in vim to have the
-     * origianl input string in input box if we step before the first real
+     * original input string in input box if we step before the first real
      * item */
     result = g_list_prepend(result, g_strdup(query));
 
@@ -258,28 +204,17 @@ static const char *get_file_by_type(HistoryType type)
 }
 
 /**
- * Loads history items form file but eleminate duplicates in FIFO order.
+ * Loads history items form file but eliminate duplicates in FIFO order.
+ *
+ * Returned list must be freed with (GDestroyNotify) free_history.
  */
 static GList *load(const char *file)
 {
     /* read the history items from file */
-    GList *list = NULL;
-
-    list = util_file_to_unique_list(
+    return util_file_to_unique_list(
         file, (Util_Content_Func)line_to_history, (GCompareFunc)history_comp,
-        (GDestroyNotify)free_history
+        (GDestroyNotify)free_history, vb.config.history_max
     );
-
-    /* if list is too long - remove items from end (oldest entries) */
-    if (vb.config.history_max < g_list_length(list)) {
-        while (vb.config.history_max < g_list_length(list)) {
-            GList *last = g_list_first(list);
-            g_free(last->data);
-            list = g_list_delete_link(list, last);
-        }
-    }
-
-    return list;
 }
 
 /**
@@ -289,7 +224,7 @@ static void write_to_file(GList *list, const char *file)
 {
     FILE *f;
     if ((f = fopen(file, "w"))) {
-        file_lock_set(fileno(f), F_WRLCK);
+        FLOCK(fileno(f), F_WRLCK);
 
         /* overwrite the history file with new unique history items */
         for (GList *link = list; link; link = link->next) {
@@ -301,11 +236,9 @@ static void write_to_file(GList *list, const char *file)
             }
         }
 
-        file_lock_set(fileno(f), F_UNLCK);
+        FLOCK(fileno(f), F_UNLCK);
         fclose(f);
     }
-
-    g_list_free_full(list, (GDestroyNotify)free_history);
 }
 
 static History *line_to_history(const char *line)
@@ -313,14 +246,14 @@ static History *line_to_history(const char *line)
     char **parts;
     int len;
 
-    while (g_ascii_isspace(*line)) {
+    while (VB_IS_SPACE(*line)) {
         line++;
     }
-    if (*line == '\0') {
+    if (!*line) {
         return NULL;
     }
 
-    History *item = g_new0(History, 1);
+    History *item = g_slice_new0(History);
 
     parts = g_strsplit(line, "\t", 2);
     len   = g_strv_length(parts);
@@ -368,5 +301,5 @@ static void free_history(History *item)
 {
     g_free(item->first);
     g_free(item->second);
-    g_free(item);
+    g_slice_free(History, item);
 }

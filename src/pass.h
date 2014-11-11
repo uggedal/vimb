@@ -1,7 +1,7 @@
 /**
  * vimb - a webkit based vim like browser.
  *
- * Copyright (C) 2012-2013 Daniel Carl
+ * Copyright (C) 2012-2014 Daniel Carl
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,25 +17,14 @@
  * along with this program. If not, see http://www.gnu.org/licenses/.
  */
 
-#ifndef _KEYBIND_H
-#define _KEYBIND_H
+#ifndef _PASS_H
+#define _PASS_H
 
-#include "command.h"
-#include <gdk/gdkkeysyms.h>
-#include <gdk/gdkkeysyms-compat.h>
+#include "config.h"
+#include "main.h"
 
-typedef struct {
-    int     mode;        /* mode maks for allowed browser modes */
-    guint   modkey;
-    guint   modmask;     /* modemask for the kayval */
-    guint   keyval;
-    Command func;
-    Arg     arg;
-} Keybind;
+void pass_enter(void);
+void pass_leave(void);
+VbResult pass_keypress(int key);
 
-void keybind_init(void);
-void keybind_cleanup(void);
-gboolean keybind_add_from_string(char *keys, const char *command, const Mode mode);
-gboolean keybind_remove_from_string(char *str, const Mode mode);
-
-#endif /* end of include guard: _KEYBIND_H */
+#endif /* end of include guard: _PASS_H */

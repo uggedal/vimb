@@ -1,7 +1,7 @@
 /**
  * vimb - a webkit based vim like browser.
  *
- * Copyright (C) 2012-2013 Daniel Carl
+ * Copyright (C) 2012-2014 Daniel Carl
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,56 +22,65 @@
 
 
 /* features */
+/* enable cookie support */
 #define FEATURE_COOKIE
+/* highlight search results */
 #define FEATURE_SEARCH_HIGHLIGHT
+/* disable scrollbars */
 #define FEATURE_NO_SCROLLBARS
-/*#define FEATURE_GTK_PROGRESSBAR*/
+/* show page title in url completions */
 #define FEATURE_TITLE_IN_COMPLETION
-#define FEATURE_IPC
-
+/* enable the read it later queue */
+#define FEATURE_QUEUE
+/* show load progress in window title */
+#define FEATURE_TITLE_PROGRESS
+/* should the history indicator [+-] be shown in status bar after url */
+#define FEATURE_HISTORY_INDICATOR
+/* show wget style progressbar in status bar */
+#define FEATURE_WGET_PROGRESS_BAR
+#ifdef HAS_GTK3
+/* enables workaround for hight dpi displays */
+/* eventually the environment variable GDK_DPI_SCALE=2.0 must be set */
+/* to get the hack working */
+/* #define FEATURE_HIGH_DPI */
+#endif
+/* enable HTTP Strict-Transport-Security*/
+#define FEATURE_HSTS
+/* enable soup caching - size can be configure by maximum-cache-size setting */
+#define FEATURE_SOUP_CACHE
+/* enable the :autocmd feature */
+#define FEATURE_AUTOCMD
+/* enable the :auto-response-header feature */
+#define FEATURE_ARH
+/* allow to remote control vimb */
+#define FEATURE_REMOTE_CONTROL
 
 /* time in seconds after that message will be removed from inputbox if the
  * message where only temporary */
 #define MESSAGE_TIMEOUT              5
 
+/* number of chars to be shown for ambiguous commands */
+#define SHOWCMD_LEN                 10
+
+/* parh to crt file for the certificate validation */
+#define SETTING_CA_BUNDLE           "/etc/ssl/certs/ca-certificates.crt"
 #define SETTING_MAX_CONNS           25
 #define SETTING_MAX_CONNS_PER_HOST   5
+/* default font size for fonts in webview */
+#define SETTING_DEFAULT_FONT_SIZE   10
+#define SETTING_GUI_FONT_NORMAL     "monospace normal 10"
+#define SETTING_GUI_FONT_EMPH       "monospace bold 10"
+#define SETTING_HOME_PAGE           "http://fanglingsu.github.io/vimb/"
 
 #define MAXIMUM_HINTS              500
 
-/* remove next line if the bookmark file fits to the new format "URL<tab>title of page<tab>tag1 tag2" */
-#define SHOW_ANNOUNCEMENT
+#define WIN_WIDTH                  800
+#define WIN_HEIGHT                 600
 
-#define ANNOUNCEMENT "\
-<!DOCTYPE html><html lang=\"en\" dir=\"ltr\"><head> \
-<title>Bookmark file format changed</title> \
-<style media=\"all\">body{width:60em;margin:0 auto}h1{color:#f90}code{display:block;margin:0 2em}</style> \
-</head> \
-<body> \
-<h1>Bookmark file format changed</h1> \
-<p>The history file and bookmarks file will now holds also the page titles to serve them in the completion list. This will break previous bookmark files.</p> \
-<p>The parts of the history and bookmark file are now separated by <b>\\t</b> char like the cookie file.</p> \
-<code> \
-// old format<br/> \
-http://very-long.uri/path.html tag1 tag2<br/> \
-http://very-long.uri/path-no-tags.html<br/> \
-</code> \
-<code> \
-// new format<br/> \
-http://very-long.uri/path.html<b>\\t</b>title of the page<b>\\t</b>tag1 tag2<br/> \
-http://very-long.uri/path-no-title.html<b>\\t\\t</b>tag1 tag2<br/> \
-http://very-long.uri/path-no-title-and-no-tags.html<br/> \
-</code> \
-<h2>What to do?</h2> \
-<p> \
-If you have no entries in you bookmark you must edit them to fit the new format. This can be done with following 'sed' command. </p> \
-<p><b>Don't forget to backup the bookmark file before running the command.</b></p> \
-<code> \
-// replace the first space in earch line of file to <b>\\t\\t</b> if the line haven't already a \t in it.<br/> \
-sed -i -e '/\\t/!{s/ /\\t\\t/}' bookmark<br/> \
-</code> \
-<p>If you had no entries in the bookmark file or you changed it successfully, you should remove the '#define SHOW_ANNOUNCEMENT' from <i>config.h</i> file and recompile vimb.</p> \
-</body> \
-</html>"
+#ifdef FEATURE_WGET_PROGRESS_BAR
+/* chars to use for the progressbar */
+#define PROGRESS_BAR             "=> "
+#define PROGRESS_BAR_LEN            20
+#endif
 
 #endif /* end of include guard: _CONFIG_H */

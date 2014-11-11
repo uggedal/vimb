@@ -1,7 +1,7 @@
 /**
  * vimb - a webkit based vim like browser.
  *
- * Copyright (C) 2012-2013 Daniel Carl
+ * Copyright (C) 2012-2014 Daniel Carl
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,21 +23,10 @@
 #include "main.h"
 
 typedef enum {
-    SETTING_SET,
-    SETTING_GET,
-    SETTING_TOGGLE
-} SettingType;
-
-typedef struct _Setting Setting;
-typedef gboolean (*SettingFunc)(const Setting*, const SettingType);
-
-struct _Setting {
-    char*       alias;
-    char*       name;
-    Type        type;
-    SettingFunc func;
-    Arg         arg;
-};
+    SETTING_OK,
+    SETTING_ERROR         = (1 << 1),
+    SETTING_USER_NOTIFIED = (1 << 2)
+} SettingStatus;
 
 void setting_init(void);
 void setting_cleanup(void);

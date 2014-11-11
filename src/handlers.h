@@ -17,34 +17,14 @@
  * along with this program. If not, see http://www.gnu.org/licenses/.
  */
 
-#ifndef _COMMAND_H
-#define _COMMAND_H
+#ifndef _HANDLERS_H
+#define _HANDLERS_H
 
-enum {
-    COMMAND_YANK_ARG,
-    COMMAND_YANK_URI,
-    COMMAND_YANK_SELECTION
-};
+void handlers_init(void);
+void handlers_cleanup(void);
+gboolean handler_add(const char *key, const char *cmd);
+gboolean handler_remove(const char *key);
+gboolean handle_uri(const char *uri);
+gboolean handler_fill_completion(GtkListStore *store, const char *input);
 
-enum {
-    COMMAND_SAVE_CURRENT,
-    COMMAND_SAVE_URI
-};
-
-#ifdef FEATURE_QUEUE
-enum {
-    COMMAND_QUEUE_PUSH,
-    COMMAND_QUEUE_UNSHIFT,
-    COMMAND_QUEUE_POP,
-    COMMAND_QUEUE_CLEAR
-};
-#endif
-
-gboolean command_search(const Arg *arg);
-gboolean command_yank(const Arg *arg, char buf);
-gboolean command_save(const Arg *arg);
-#ifdef FEATURE_QUEUE
-gboolean command_queue(const Arg *arg);
-#endif
-
-#endif /* end of include guard: _COMMAND_H */
+#endif /* end of include guard: _HANDLERS_H */

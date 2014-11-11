@@ -1,7 +1,7 @@
 /**
  * vimb - a webkit based vim like browser.
  *
- * Copyright (C) 2012-2013 Daniel Carl
+ * Copyright (C) 2012-2014 Daniel Carl
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,11 +17,14 @@
  * along with this program. If not, see http://www.gnu.org/licenses/.
  */
 
+#include "config.h"
 #include "main.h"
 #include "dom.h"
+#include "mode.h"
 
 extern VbCore vb;
 
+static gboolean element_is_visible(WebKitDOMDOMWindow* win, WebKitDOMElement* element);
 static gboolean auto_insert(Element *element);
 static gboolean editable_focus_cb(Element *element, Event *event);
 static Element *get_active_element(Document *doc);
@@ -32,9 +35,13 @@ void dom_check_auto_insert(WebKitWebView *view)
     Document *doc   = webkit_web_view_get_dom_document(view);
     Element *active = get_active_element(doc);
 
-    /* the focus was not set automatically - add event listener to track focus
-     * events on the document */
-    if (!auto_insert(active)) {
+    if (vb.config.strict_focus || !auto_insert(active)) {
+        /* if the strict-focus is on also blur the possible active element */
+        if (vb.config.strict_focus) {
+            dom_clear_focus(view);
+        }
+        /* the focus was not set automatically - add event listener to track
+         * focus events on the document */
         HtmlElement *element = webkit_dom_document_get_body(doc);
         if (!element) {
             element = WEBKIT_DOM_HTML_ELEMENT(webkit_dom_document_get_document_element(doc));
@@ -57,6 +64,52 @@ void dom_clear_focus(WebKitWebView *view)
 }
 
 /**
+ * Set focus to the first found editable element and returns if a element was
+ * found to focus.
+ */
+gboolean dom_focus_input(WebKitWebView *view)
+{
+    gboolean found = false;
+    WebKitDOMNode *html, *node;
+    WebKitDOMDocument *doc;
+    WebKitDOMDOMWindow *win;
+    WebKitDOMNodeList *list;
+    WebKitDOMXPathNSResolver *resolver;
+    WebKitDOMXPathResult* result;
+
+    doc  = webkit_web_view_get_dom_document(view);
+    win  = webkit_dom_document_get_default_view(doc);
+    list = webkit_dom_document_get_elements_by_tag_name(doc, "html");
+    if (!list) {
+        return false;
+    }
+
+    html     = webkit_dom_node_list_item(list, 0);
+    resolver = webkit_dom_document_create_ns_resolver(doc, html);
+    if (!resolver) {
+        return false;
+    }
+
+    result = webkit_dom_document_evaluate(
+        doc, "//input[not(@type) or @type='text' or @type='password']|//textarea",
+        html, resolver, 0, NULL, NULL
+    );
+    if (!result) {
+        return false;
+    }
+    while ((node = webkit_dom_xpath_result_iterate_next(result, NULL))) {
+        if (element_is_visible(win, WEBKIT_DOM_ELEMENT(node))) {
+            webkit_dom_element_focus(WEBKIT_DOM_ELEMENT(node));
+            found = true;
+            break;
+        }
+    }
+    g_object_unref(list);
+
+    return found;
+}
+
+/**
  * Indicates if the given dom element is an editable element like text input,
  * password or textarea.
  */
@@ -71,12 +124,12 @@ gboolean dom_is_editable(Element *element)
 
     tagname = webkit_dom_element_get_tag_name(element);
     type    = webkit_dom_element_get_attribute(element, "type");
+    /* element is editable if it's a text area or input with no type, text or
+     * pasword */
     if (!g_ascii_strcasecmp(tagname, "textarea")) {
         result = true;
     } else if (!g_ascii_strcasecmp(tagname, "input")
-        && g_ascii_strcasecmp(type, "submit")
-        && g_ascii_strcasecmp(type, "reset")
-        && g_ascii_strcasecmp(type, "image")
+        && (!*type || !g_ascii_strcasecmp(type, "text") || !g_ascii_strcasecmp(type, "password"))
     ) {
         result = true;
     } else {
@@ -126,10 +179,29 @@ void dom_editable_element_set_disable(Element *element, gboolean value)
     }
 }
 
+static gboolean element_is_visible(WebKitDOMDOMWindow* win, WebKitDOMElement* element)
+{
+    gchar* value = NULL;
+
+    WebKitDOMCSSStyleDeclaration* style = webkit_dom_dom_window_get_computed_style(win, element, "");
+    value = webkit_dom_css_style_declaration_get_property_value(style, "visibility");
+    if (value && g_ascii_strcasecmp(value, "hidden") == 0) {
+        return false;
+    }
+    value = webkit_dom_css_style_declaration_get_property_value(style, "display");
+    if (value && g_ascii_strcasecmp(value, "none") == 0) {
+        return false;
+    }
+
+    return true;
+}
+
 static gboolean auto_insert(Element *element)
 {
-    if (dom_is_editable(element)) {
-        vb_set_mode(VB_MODE_INSERT, false);
+    /* don't change mode if we are in pass through mode */
+    if (vb.mode->id != 'p' && dom_is_editable(element)) {
+        mode_enter('i');
+
         return true;
     }
     return false;
@@ -140,7 +212,7 @@ static gboolean editable_focus_cb(Element *element, Event *event)
     webkit_dom_event_target_remove_event_listener(
         WEBKIT_DOM_EVENT_TARGET(element), "focus", G_CALLBACK(editable_focus_cb), false
     );
-    if (CLEAN_MODE(vb.state.mode) != VB_MODE_INSERT) {
+    if (vb.mode->id != 'i') {
         EventTarget *target = webkit_dom_event_get_target(event);
         auto_insert((void*)target);
     }

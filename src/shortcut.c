@@ -1,7 +1,7 @@
 /**
  * vimb - a webkit based vim like browser.
  *
- * Copyright (C) 2012-2013 Daniel Carl
+ * Copyright (C) 2012-2014 Daniel Carl
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,6 +20,7 @@
 #include "main.h"
 #include "shortcut.h"
 #include "util.h"
+#include "ascii.h"
 
 extern VbCore vb;
 
@@ -56,8 +57,8 @@ gboolean shortcut_remove(const char *key)
 
 gboolean shortcut_set_default(const char *key)
 {
-    /* do not check if the shotcut exists to be able to set the default
-     * before defining the shotcut */
+    /* do not check if the shortcut exists to be able to set the default
+     * before defining the shortcut */
     OVERWRITE_STRING(default_key, key);
 
     return true;
@@ -70,42 +71,102 @@ gboolean shortcut_set_default(const char *key)
 char *shortcut_get_uri(const char *string)
 {
     const char *tmpl, *query = NULL;
-    char *uri, **parts, ph[3] = "$0";
-    unsigned int len;
-    int max;
+    char *uri, *quoted_param;
+    int max_num, current_num;
+    GString *token;
 
     tmpl = shortcut_lookup(string, &query);
     if (!tmpl) {
         return NULL;
     }
 
-    uri = g_strdup(tmpl);
-    max = get_max_placeholder(tmpl);
-    /* skip if no placeholders found */
-    if (max < 0) {
+    max_num = get_max_placeholder(tmpl);
+    /* if there are only $0 placeholders we don't need to split the parameters */
+    if (max_num == 0) {
+        quoted_param = soup_uri_encode(query, "&");
+        uri          = util_str_replace("$0", quoted_param, tmpl);
+        g_free(quoted_param);
+
         return uri;
     }
 
-    /* split the parameters */
-    parts = g_strsplit(query, " ", max + 1);
-    len   = g_strv_length(parts);
+    uri = g_strdup(tmpl);
 
-    for (unsigned int n = 0; n < len; n++) {
-        char *new, *qs;
-        ph[1] = n + '0';
-        qs  = soup_uri_encode(parts[n], "&");
-        new = util_str_replace(ph, qs, uri);
-        g_free(qs);
-        g_free(uri);
-        uri = new;
+    /* skip if no placeholders found */
+    if (max_num < 0) {
+        return uri;
     }
-    g_strfreev(parts);
+
+    current_num = 0;
+    token       = g_string_new(NULL);
+    while (*query) {
+        /* parse the query tokens */
+        if (*query == '"' || *query == '\'') {
+            /* save the last used quote char to find it's matching counterpart */
+            char last_quote = *query;
+
+            /* skip the quote */
+            query++;
+            /* collect the char until the closing quote or end of string */
+            while (*query && *query != last_quote) {
+                g_string_append_c(token, *query);
+                query++;
+            }
+            /* if we end up at the closing quote - skip this quote too */
+            if (*query == last_quote) {
+                query++;
+            }
+        } else if (VB_IS_SPACE(*query)) {
+            /* skip whitespace */
+            query++;
+
+            continue;
+        } else if (current_num >= max_num) {
+            /* if we have parsed as many params like placeholders - put the
+             * rest of the query as last parameter */
+            while (*query) {
+                g_string_append_c(token, *query);
+                query++;
+            }
+        } else {
+            /* collect the following character up to the next whitespace */
+            while (*query && !VB_IS_SPACE(*query)) {
+                g_string_append_c(token, *query);
+                query++;
+            }
+        }
+
+        /* replace the placeholders with parsed token */
+        if (token->len) {
+            char *new;
+
+            quoted_param = soup_uri_encode(token->str, "&");
+            new = util_str_replace((char[]){'$', current_num + '0', '\0'}, quoted_param, uri);
+            g_free(quoted_param);
+            g_free(uri);
+            uri = new;
+
+            /* truncate the last token to fill for next loop */
+            g_string_truncate(token, 0);
+        }
+        current_num++;
+    }
+    g_string_free(token, true);
 
     return uri;
 }
 
+gboolean shortcut_fill_completion(GtkListStore *store, const char *input)
+{
+    GList *src = g_hash_table_get_keys(shortcuts);
+    gboolean found = util_fill_completion(store, input, src);
+    g_list_free(src);
+
+    return found;
+}
+
 /**
- * Retrieves th highest placesholder number used in given string.
+ * Retrieves th highest placeholder number used in given string.
  * If no placeholder is found -1 is returned.
  */
 static int get_max_placeholder(const char *str)
@@ -125,27 +186,24 @@ static int get_max_placeholder(const char *str)
 }
 
 /**
- * Retrieves the shortcut uri template for given string.
- * If the string contains the shortcut key the shortcut for this wee be
- * returned, else the default shortcur uri well be returned.
- * In given query pointer will be filled with the query part of the string,
- * thats the string without a possible shortcut key.
+ * Retrieves the shortcut uri template for given string. And fills given query
+ * pointer with the query part of the given string (everything except of the
+ * shortcut identifier).
  */
 static const char *shortcut_lookup(const char *string, const char **query)
 {
     char *p, *uri = NULL;
 
     if ((p = strchr(string, ' '))) {
-        *p = '\0';
-        /* is the first word the key? */
-        if ((uri = g_hash_table_lookup(shortcuts, string))) {
+        char *key  = g_strndup(string, p - string);
+        /* is the first word might be a shortcut */
+        if ((uri = g_hash_table_lookup(shortcuts, key))) {
             *query = p + 1;
-        } else {
-            *p = ' ';
         }
+        g_free(key);
     }
 
-    if (!uri && (uri = g_hash_table_lookup(shortcuts, default_key))) {
+    if (!uri && default_key && (uri = g_hash_table_lookup(shortcuts, default_key))) {
         *query = string;
     }
 

@@ -1,7 +1,7 @@
 /**
  * vimb - a webkit based vim like browser.
  *
- * Copyright (C) 2012-2013 Daniel Carl
+ * Copyright (C) 2012-2014 Daniel Carl
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -33,11 +33,19 @@
 #else
 #endif
 #include "config.h"
+#ifdef FEATURE_HSTS
+#include "hsts.h"
+#endif
 
 /* size of some I/O buffer */
 #define BUF_SIZE  512
 
 #define LENGTH(x) (sizeof x / sizeof x[0])
+
+#define FLOCK(fd, cmd) { \
+    struct flock lock = {.l_type=cmd,.l_start=0,.l_whence=SEEK_SET,.l_len=0}; \
+    fcntl(fd, F_SETLK, lock); \
+}
 
 #ifdef DEBUG
 #define PRINT_DEBUG(...) { \
@@ -55,28 +63,15 @@
 #define TIMER_END
 #endif
 
-#define GET_TEXT() (gtk_entry_get_text(GTK_ENTRY(vb.gui.inputbox)))
-#define PUT_TEXT(x) { \
-    gtk_entry_set_text(GTK_ENTRY(vb.gui.inputbox), x); \
-    gtk_editable_set_position(GTK_EDITABLE(vb.gui.inputbox), -1); \
-}
-#define GET_URI() (webkit_web_view_get_uri(vb.gui.webview))
-#define CLEAN_MODE(mode) ((mode) & ~(VB_MODE_COMPLETE | VB_MODE_SEARCH | VB_MODE_HINTING))
-#define CLEAR_INPUT() (vb_echo(VB_MSG_NORMAL, ""))
 #define PRIMARY_CLIPBOARD() gtk_clipboard_get(GDK_SELECTION_PRIMARY)
 #define SECONDARY_CLIPBOARD() gtk_clipboard_get(GDK_NONE)
 
-#define OVERWRITE_STRING(t, s) if (t) {g_free(t); t = NULL;} t = g_strdup(s);
+#define OVERWRITE_STRING(t, s) {if (t) {g_free(t); t = NULL;} t = g_strdup(s);}
+#define OVERWRITE_NSTRING(t, s, l) {if (t) {g_free(t); t = NULL;} t = g_strndup(s, l);}
 
-#define IS_ESCAPE_KEY(k, s) ((k == GDK_Escape && s == 0) || (k == GDK_c && s == GDK_CONTROL_MASK))
-#define CLEAN_STATE_WITH_SHIFT(e) ((e)->state & (GDK_MOD1_MASK|GDK_MOD4_MASK|GDK_SHIFT_MASK|GDK_CONTROL_MASK))
-#define CLEAN_STATE(e)            ((e)->state & (GDK_MOD1_MASK|GDK_MOD4_MASK|GDK_CONTROL_MASK))
-
-#define file_lock_set(fd, cmd) \
-{ \
-    struct flock lock = { .l_type = cmd, .l_start = 0, .l_whence = SEEK_SET, .l_len = 0}; \
-    fcntl(fd, F_SETLK, lock); \
-}
+#define GET_CHAR(n)  (((Setting*)g_hash_table_lookup(vb.config.settings, n))->value.s)
+#define GET_INT(n)   (((Setting*)g_hash_table_lookup(vb.config.settings, n))->value.i)
+#define GET_BOOL(n)  (((Setting*)g_hash_table_lookup(vb.config.settings, n))->value.b)
 
 #ifdef HAS_GTK3
 #define VbColor GdkRGBA
@@ -91,7 +86,7 @@
 #define VB_GTK_STATE_NORMAL             GTK_STATE_FLAG_NORMAL
 #define VB_GTK_STATE_ACTIVE             GTK_STATE_FLAG_ACTIVE
 #define VB_GTK_STATE_SELECTED           GTK_STATE_FLAG_SELECTED
-#define VB_WIDGET_SET_STATE(w, s)       gtk_widget_set_state_flags(w, s, true)
+#define VB_WIDGET_SET_STATE(w, s)       (gtk_widget_set_state_flags(w, s, true))
 
 #else
 
@@ -107,30 +102,39 @@
 #define VB_GTK_STATE_NORMAL             GTK_STATE_NORMAL
 #define VB_GTK_STATE_ACTIVE             GTK_STATE_ACTIVE
 #define VB_GTK_STATE_SELECTED           GTK_STATE_SELECTED
-#define VB_WIDGET_SET_STATE(w, s)       gtk_widget_set_state(w, s)
+#define VB_WIDGET_SET_STATE(w, s)       (gtk_widget_set_state(w, s))
 #endif
 
+#ifndef SOUP_CHECK_VERSION
+#define SOUP_CHECK_VERSION(major, minor, micro) (0)
+#endif
+
+/* the special mark ' must be the first in the list for easiest lookup */
+#define VB_MARK_CHARS   "'abcdefghijklmnopqrstuvwxyz"
+#define VB_MARK_TICK    0
+#define VB_MARK_SIZE    (sizeof(VB_MARK_CHARS) - 1)
+
+#define VB_USER_REG     "abcdefghijklmnopqrstuvwxyz"
+#define VB_REG_CHARS    VB_USER_REG "%:/;"
+#define VB_REG_SIZE     (sizeof(VB_REG_CHARS) - 1)
+
 /* enums */
-typedef enum _vb_mode {
-    /* main modes */
-    VB_MODE_NORMAL        = 1<<0,
-    VB_MODE_COMMAND       = 1<<1,
-    VB_MODE_INSERT        = 1<<2,
-    /* sub modes */
-    VB_MODE_SEARCH        = 1<<3, /* normal mode */
-    VB_MODE_COMPLETE      = 1<<4, /* command mode */
-    VB_MODE_HINTING       = 1<<5, /* command mode */
-} Mode;
+typedef enum {
+    RESULT_COMPLETE,
+    RESULT_MORE,
+    RESULT_ERROR
+} VbResult;
 
 typedef enum {
     VB_INPUT_UNKNOWN,
-    VB_INPUT_SET              = 1<<0,
-    VB_INPUT_OPEN             = 1<<1,
-    VB_INPUT_TABOPEN          = 1<<2,
-    VB_INPUT_COMMAND          = 1<<3,
-    VB_INPUT_SEARCH_FORWARD   = 1<<4,
-    VB_INPUT_SEARCH_BACKWARD  = 1<<5,
-    VB_INPUT_ALL              = VB_INPUT_OPEN | VB_INPUT_TABOPEN | VB_INPUT_SET | VB_INPUT_COMMAND | VB_INPUT_SEARCH_FORWARD | VB_INPUT_SEARCH_BACKWARD,
+    VB_INPUT_SET              = 0x01,
+    VB_INPUT_OPEN             = 0x02,
+    VB_INPUT_TABOPEN          = 0x04,
+    VB_INPUT_COMMAND          = 0x08,
+    VB_INPUT_SEARCH_FORWARD   = 0x10,
+    VB_INPUT_SEARCH_BACKWARD  = 0x20,
+    VB_INPUT_BOOKMARK_ADD     = 0x40,
+    VB_INPUT_ALL              = 0xff, /* map to match all input types */
 } VbInputType;
 
 enum {
@@ -175,12 +179,6 @@ enum {
 };
 
 typedef enum {
-    VB_SEARCH_OFF,
-    VB_SEARCH_FORWARD  = (1<<0),
-    VB_SEARCH_BACKWARD = (1<<1),
-} SearchDirection;
-
-typedef enum {
     VB_MSG_NORMAL,
     VB_MSG_ERROR,
     VB_MSG_LAST
@@ -210,23 +208,36 @@ typedef enum {
     FILES_COMMAND,
     FILES_SEARCH,
     FILES_BOOKMARK,
+#ifdef FEATURE_QUEUE
+    FILES_QUEUE,
+#endif
     FILES_USER_STYLE,
+#ifdef FEATURE_HSTS
+    FILES_HSTS,
+#endif
     FILES_LAST
 } VbFile;
-
-typedef enum {
-    TYPE_CHAR,
-    TYPE_BOOLEAN,
-    TYPE_INTEGER,
-    TYPE_FLOAT,
-    TYPE_COLOR,
-    TYPE_FONT,
-} Type;
 
 enum {
     VB_CLIPBOARD_PRIMARY   = (1<<1),
     VB_CLIPBOARD_SECONDARY = (1<<2)
 };
+
+typedef int (*SettingFunction)(const char *name, int type, void *value, void *data);
+typedef union {
+    gboolean b;
+    int      i;
+    char     *s;
+} SettingValue;
+
+typedef struct {
+    const char      *name;
+    int             type;
+    SettingValue    value;
+    SettingFunction setter;
+    int             flags;
+    void            *data;  /* data given to the setter */
+} Setting;
 
 /* structs */
 typedef struct {
@@ -234,49 +245,97 @@ typedef struct {
     char *s;
 } Arg;
 
+typedef void (*ModeTransitionFunc) (void);
+typedef VbResult (*ModeKeyFunc) (int);
+typedef void (*ModeInputChangedFunc) (const char*);
+typedef struct {
+    char                 id;
+    ModeTransitionFunc   enter;         /* is called if the mode is entered */
+    ModeTransitionFunc   leave;         /* is called if the mode is left */
+    ModeKeyFunc          keypress;      /* receives key to process */
+    ModeInputChangedFunc input_changed; /* is triggered if input textbuffer is changed */
+#define FLAG_NOMAP       0x0001  /* disables mapping for key strokes */
+#define FLAG_HINTING     0x0002  /* marks active hinting submode */
+#define FLAG_COMPLETION  0x0004  /* marks active completion submode */
+#define FLAG_PASSTHROUGH 0x0008  /* don't handle any other keybind than <esc> */
+    unsigned int         flags;
+} Mode;
+
 /* statusbar */
 typedef struct {
     GtkBox    *box;
     GtkWidget *left;
     GtkWidget *right;
+    GtkWidget *cmd;
 } StatusBar;
 
 /* gui */
 typedef struct {
     GtkWidget          *window;
-    GtkWidget          *scroll;
     WebKitWebView      *webview;
     WebKitWebInspector *inspector;
     GtkBox             *box;
     GtkWidget          *eventbox;
-    GtkWidget          *inputbox;
+    GtkWidget          *input;
+    GtkTextBuffer      *buffer; /* text buffer associated with the input for fast access */
     GtkWidget          *pane;
     StatusBar          statusbar;
-    GtkScrollbar       *sb_h;
-    GtkScrollbar       *sb_v;
     GtkAdjustment      *adjust_h;
     GtkAdjustment      *adjust_v;
 } Gui;
 
 /* state */
 typedef struct {
-    Mode            mode;
-    char            modkey;
-    guint           count;
+    char            *uri;
     guint           progress;
     StatusType      status_type;
     MessageType     input_type;
     gboolean        is_inspecting;
     GList           *downloads;
+    gboolean        processed_key;
+    char            *title;                 /* holds the window title */
+#define PROMPT_SIZE 4
+    char            prompt[PROMPT_SIZE];    /* current prompt ':', 'g;t', '/' including nul */
+    gdouble         marks[VB_MARK_SIZE];    /* holds marks set to page with 'm{markchar}' */
+    char            *linkhover;             /* the uri of the curret hovered link */
+    char            *reg[VB_REG_SIZE];      /* holds the yank buffer */
+    gboolean        enable_register;        /* indicates if registers are filled */
+    gboolean        enable_history;         /* indicates if history entries are written */
+#ifdef FEATURE_SEARCH_HIGHLIGHT
+    int             search_matches;         /* number of matches search results */
+#endif
 } State;
 
 typedef struct {
-    time_t cookie_timeout;
-    int    scrollstep;
-    char   *home_page;
-    char   *download_dir;
-    guint  history_max;
-    char   *editor_command;
+#ifdef FEATURE_COOKIE
+    time_t       cookie_timeout;
+    int          cookie_expire_time;
+#endif
+    int          scrollstep;
+    char         *download_dir;
+    guint        history_max;
+    guint        timeoutlen;      /* timeout for ambiguous mappings */
+    gboolean     strict_focus;
+    GHashTable   *headers;        /* holds user defined header appended to requests */
+#ifdef FEATURE_ARH
+    GSList       *autoresponseheader; /* holds user defined list of auto-response-header */
+#endif
+    char         *nextpattern;    /* regex patter nfor prev link matching */
+    char         *prevpattern;    /* regex patter nfor next link matching */
+    char         *file;           /* path to the custome config file */
+    GSList       *cmdargs;        /* list of commands given by --cmd option */
+    char         *cafile;         /* path to the ca file */
+    GTlsDatabase *tls_db;         /* tls database */
+    float        default_zoom;    /* default zoomlevel that is applied on zz zoom reset */
+    gboolean     kioskmode;
+    gboolean     input_autohide;  /* indicates if the inputbox should be hidden if it's empty */
+#ifdef FEATURE_HSTS
+    HSTSProvider *hsts_provider;  /* the hsts session feature that is added to soup session */
+#endif
+#ifdef FEATURE_SOUP_CACHE
+    SoupCache    *soup_cache;     /* soup caching feature model */
+#endif
+    GHashTable   *settings;
 } Config;
 
 typedef struct {
@@ -298,6 +357,7 @@ typedef struct {
     State           state;
 
     char            *files[FILES_LAST];
+    Mode            *mode;
     Config          config;
     Style           style;
     SoupSession     *session;
@@ -306,7 +366,6 @@ typedef struct {
 #else
     GdkNativeWindow embed;
 #endif
-    char            *custom_config;
 } VbCore;
 
 /* main object */
@@ -315,18 +374,19 @@ extern VbCore core;
 /* functions */
 void vb_echo_force(const MessageType type,gboolean hide, const char *error, ...);
 void vb_echo(const MessageType type, gboolean hide, const char *error, ...);
-gboolean vb_eval_script(WebKitWebFrame *frame, char *script, char *file, char **value);
+void vb_set_input_text(const char *text);
+char *vb_get_input_text(void);
+void vb_input_activate(void);
 gboolean vb_load_uri(const Arg *arg);
 gboolean vb_set_clipboard(const Arg *arg);
-gboolean vb_set_mode(Mode mode, gboolean clean);
 void vb_set_widget_font(GtkWidget *widget, const VbColor *fg, const VbColor *bg, PangoFontDescription *font);
 void vb_update_statusbar(void);
 void vb_update_status_style(void);
 void vb_update_input_style(void);
 void vb_update_urlbar(const char *uri);
-VbInputType vb_get_input_parts(const char* input, unsigned int use,
-    const char **prefix, const char **clean);
+void vb_register_add(char buf, const char *value);
+const char *vb_register_get(char buf);
 gboolean vb_download(WebKitWebView *view, WebKitDownload *download, const char *path);
-void vb_quit(void);
+void vb_quit(gboolean force);
 
 #endif /* end of include guard: _MAIN_H */

@@ -1,10 +1,10 @@
 #----------------user/install options----------------
-VERSION = 0.1.9
+VERSION = 2.8
 
 PROJECT = vimb
-PREFIX  ?= /usr/local
-BINDIR  ?= $(PREFIX)/bin
-MANDIR  ?= $(PREFIX)/share/man
+PREFIX ?= /usr/local
+BINDIR ?= $(PREFIX)/bin
+MANDIR ?= $(PREFIX)/share/man
 
 #----------------compile options---------------------
 
@@ -19,45 +19,50 @@ LIBS += $(GTK3LIBS)
 USEGTK3 = 1
 else
 LIBS += $(GTK2LIBS)
+$(warning Cannot find gtk3-libs, falling back to gtk2)
 endif
 else
 LIBS += $(GTK2LIBS)
 endif
 
-CFLAGS += $(shell pkg-config --cflags $(LIBS))
-CFLAGS += -Wall
-CFLAGS += -pipe
-CFLAGS += -ansi
-CFLAGS += -std=c99
-CFLAGS += -pedantic
-CFLAGS += -Wmissing-declarations
-CFLAGS += -Wmissing-parameter-type
-CFLAGS += -Wno-overlength-strings
-#CFLAGS += -Wstrict-prototypes
+# generate a first char upper case project name
+PROJECT_UCFIRST = $(shell echo '${PROJECT}' | awk '{for(i=1;i<=NF;i++){$$i=toupper(substr($$i,1,1))substr($$i,2)}}1')
 
-LDFLAGS += $(shell pkg-config --libs $(LIBS)) -lX11 -lXext -lm
-
-CPPFLAGS += -DVERSION=\"${VERSION}\" -D_BSD_SOURCE -D_XOPEN_SOURCE=500
-CPPFLAGS += -DPROJECT=\"${PROJECT}\"
+CPPFLAGS  = -DVERSION=\"${VERSION}\"
+CPPFLAGS += -DPROJECT=\"${PROJECT}\" -DPROJECT_UCFIRST=\"${PROJECT_UCFIRST}\"
+CPPFLAGS += -D_XOPEN_SOURCE=500
 ifeq ($(USEGTK3), 1)
 CPPFLAGS += -DHAS_GTK3
+CPPFLAGS += -DGSEAL_ENABLE
+CPPFLAGS += -DGTK_DISABLE_SINGLE_INCLUDES
+CPPFLAGS += -DGTK_DISABLE_DEPRECATED
+CPPFLAGS += -DGDK_DISABLE_DEPRECATED
 endif
 
-#----------------developer options-------------------
-DFLAGS += $(CFLAGS)
-DFLAGS += -DDEBUG
-DFLAGS += -ggdb
-DFLAGS += -g
+# prepare the lib flags used for the linker
+LIBFLAGS = $(shell pkg-config --libs $(LIBS)) -lX11
 
-#----------------end of options----------------------
+# normal compiler flags
+CFLAGS  += $(shell pkg-config --cflags $(LIBS))
+CFLAGS  += -Wall -pipe -std=c99
+CFLAGS  += -Wno-overlength-strings -Werror=format-security
+CFLAGS  += ${CPPFLAGS}
+LDFLAGS += ${LIBFLAGS}
+
+# compiler flags for the debug target
+DFLAGS   += $(CFLAGS) -ggdb -g -O0
+DLDFLAGS += ${LIBFLAGS}
+
 OBJ       = $(patsubst %.c, %.o, $(wildcard src/*.c))
 DOBJ      = $(patsubst %.c, %.do, $(wildcard src/*.c))
+LOBJ      = $(patsubst %.c, %.lo, $(wildcard src/*.c))
 DEPS      = $(OBJ:%.o=%.d)
 
 TARGET    = $(PROJECT)
 DTARGET   = $(TARGET)_dbg
+LIBTARGET = tests/lib$(PROJECT).so
 DIST_FILE = $(PROJECT)_$(VERSION).tar.gz
+MANDIR1   = $(MANDIR)/man1
+MAN1      = $(PROJECT).1
 
-FMOD = 0644
-
-MFLAGS = --no-print-directory
+MFLAGS    =
